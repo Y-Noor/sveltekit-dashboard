@@ -72,10 +72,10 @@
     })();
 </script>
 
+
+<main class="layout-center">
 <!-- 2. HTML STRUCTURE -->
-<div class="dashboard-header">
-	<h1>Dashboard Builder</h1>
-	
+<div class="dashboard-header">	
 	<div class="controls-row">
 		
 		<!-- 1. CATEGORY -->
@@ -130,6 +130,7 @@
 		
 	</div>
 </div>
+</main>
 
 <!-- 3. STYLING (Scoped automatically to this component) -->
 <style>
@@ -165,4 +166,47 @@
     cursor: not-allowed;       /* 'No entry' mouse cursor */
     opacity: 0.7;              /* Optional: makes it look faded */
 }
+
+ main {
+        max-width: 1000px;  /* Stop it from getting too wide on huge screens */
+        margin: 0 auto;     /* The Magic: Centers the container horizontally */
+        padding-top: 4rem;  /* Adds space from the very top of the browser */
+        padding-left: 1rem; /* Prevents touching edges on mobile */
+        padding-right: 1rem;
+    }
+
+    /* 2. The Header text */
+    .dashboard-header h1 {
+        text-align: center; /* Center the title text */
+        margin-bottom: 1.5rem;
+    }
+
+    /* 3. The Controls Row */
+    .controls-row {
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        
+        /* ADD THIS: This centers the dropdowns inside the container */
+        justify-content: center; 
+        
+        /* Optional: Allow wrapping on small screens (mobile phones) */
+        flex-wrap: wrap; 
+    }
+
+    /* ... keep your existing button/select styles ... */
+    select, button {
+        padding: 0.5rem 1rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 1rem;
+        height: 40px;
+    }
+
+    button {
+        background-color: #007acc;
+        color: white;
+        cursor: pointer;
+        border: none;
+    }
 </style>
