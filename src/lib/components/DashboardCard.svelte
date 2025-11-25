@@ -8,7 +8,9 @@
 	export let title: string;
 	export let type: string; // e.g., 'Bar Chart', 'Line Chart'
 	export let onDelete: () => void;
-
+    export let data = null; // <--- Add this line to accept the data we processed
+    
+	console.log("DashboardCard received data:", data);
 	// 2. Internal State
 	let canvasInfo: HTMLCanvasElement;
 	let chartInstance: any;
@@ -25,49 +27,50 @@
 
 	// 4. Initialize Chart on Mount
 	onMount(() => {
-		if (canvasInfo) {
-			const configType = chartTypes[type] || 'bar';
-			
-            // Generate random dummy data
-            const randomData = Array.from({ length: 6 }, () => Math.floor(Math.random() * 100));
+    if (canvasInfo) {
+        // 1. Map the UI type (e.g., 'Line Chart') to Chart.js type ('line')
+        const configType = chartTypes[type] || 'line';
+        
+        // 2. USE THE ACTUAL DATA
+        // We use the 'data' prop passed from the parent. 
+        // Fallback to empty structure to prevent crashes if data is null.
+        const finalChartData = data || { labels: [], datasets: [] };
 
-			chartInstance = new Chart(canvasInfo, {
-				type: configType as any,
-				data: {
-					labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
-					datasets: [{
-						label: 'Sales', // Label for the legend
-						data: randomData,
-						backgroundColor: [
-							'rgba(54, 162, 235, 0.6)',
-							'rgba(255, 99, 132, 0.6)',
-							'rgba(255, 206, 86, 0.6)',
-							'rgba(75, 192, 192, 0.6)',
-							'rgba(153, 102, 255, 0.6)',
-							'rgba(255, 159, 64, 0.6)'
-						],
-						borderColor: 'rgba(54, 162, 235, 1)',
-						borderWidth: 1,
-						fill: type === 'Area Chart', // Special logic for Area Chart
-                        tension: 0.3 // Smooth curves for lines
-					}]
-				},
-				options: {
-					responsive: true,
-					maintainAspectRatio: false, // Fits the container
-					plugins: {
-						legend: { 
-                            display: configType === 'pie', // Only show legend for Pie charts
-                            position: 'bottom'
-                        },
-                        title: {
-                            display: false // We use our own HTML header for the title
+        chartInstance = new Chart(canvasInfo, {
+            type: configType,
+            data: finalChartData, // <--- This injects your processed labels and datasets
+            options: {
+                responsive: true,
+                maintainAspectRatio: false, // Critical for grid resizing
+                interaction: {
+                    mode: 'index', // Shows tooltip for all lines at that specific X-axis point
+                    intersect: false,
+                },
+                plugins: {
+                    legend: { 
+                        display: true, // Show legend so we can see "Fajr", "Maghrib", etc.
+                        position: 'bottom'
+                    },
+                    title: {
+                        display: false // We use the widget header for the title
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true, // Starts Y-axis at 0 (good for counting people)
+                        ticks: {
+                            precision: 0 // Forces integers (you can't have 0.5 people)
                         }
-					}
-				}
-			});
-		}
-	});
+                    }
+                }
+            }
+        });
+    }
+});
+$: if (chartInstance && data) {
+    chartInstance.data = data;
+    chartInstance.update();
+}
 
 	// 5. Cleanup to prevent memory leaks
 	onDestroy(() => {
