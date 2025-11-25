@@ -30,23 +30,48 @@
 		'Pie Chart': 'pie',
 		'Area Chart': 'line',
 		'KPI Card': 'bar',
-		'Heatmap': 'bar'
+		'Heatmap': 'bar',
+		'Attendee Leaderboard': 'bar'
 	};
+
+	const parseDate = (str) => new Date(str).getTime();
 
 	// 4. Initialize Chart on Mount
 	onMount(() => {
-		if (!data) return;
+		if (!data) {
+			console.log('No data provided to DashboardCard');
+			return;
+		}
+		
+		console.log('Initializing chart with data:', data);
 		
 		// Save reference to the full data
 		originalData = JSON.parse(JSON.stringify(data));
-		
+
+		if (originalData.labels.length > 0) {
+			// Set default to last 7 days
+			const today = new Date();
+			const sevenDaysAgo = new Date();
+			sevenDaysAgo.setDate(today.getDate() - 7);
+			
+			// Format to YYYY-MM-DD for input fields
+			startDate = sevenDaysAgo.toISOString().split('T')[0];
+			endDate = today.toISOString().split('T')[0];
+			
+			// Apply initial filter
+			filterChartData();
+		}
+
 		if (canvasInfo) {
 			const configType = chartTypes[type] || 'line';
-			const finalChartData = JSON.parse(JSON.stringify(data));
-
+			
+			// Start with empty chart - will be populated by filterChartData
 			chartInstance = new Chart(canvasInfo, {
 				type: configType,
-				data: finalChartData,
+				data: {
+					labels: [],
+					datasets: []
+				},
 				options: {
 					responsive: true,
 					maintainAspectRatio: false,
@@ -74,21 +99,13 @@
 				}
 			});
 		}
-		
-		// Initialize Date Pickers with Min/Max from data
-		if (originalData.labels && originalData.labels.length > 0) {
-			const dates = originalData.labels.map(l => new Date(l));
-			const minDate = new Date(Math.min(...dates));
-			const maxDate = new Date(Math.max(...dates));
-			
-			startDate = minDate.toISOString().split('T')[0];
-			endDate = maxDate.toISOString().split('T')[0];
-		}
 	});
 
-	// 5. Reactive filtering when dates change
-	$: if (chartInstance && originalData && startDate && endDate) {
-		filterChartData();
+	// 5. Handle date change events
+	function handleDateChange() {
+		if (chartInstance && originalData && startDate && endDate) {
+			filterChartData();
+		}
 	}
 
 	// 6. Update chart when data prop changes
@@ -98,18 +115,34 @@
 	}
 
 	function filterChartData() {
-		// Set to start of day for startDate and end of day for endDate (inclusive)
-		const startTs = new Date(startDate).setHours(0, 0, 0, 0);
-		const endTs = new Date(endDate).setHours(23, 59, 59, 999);
+		if (!chartInstance || !originalData || !originalData.labels || !originalData.datasets) {
+			console.log('Cannot filter - missing data:', { chartInstance, originalData });
+			return;
+		}
+		
+		// Create new Date objects to avoid mutation issues
+		const startOfDay = new Date(startDate);
+		startOfDay.setHours(0, 0, 0, 0);
+		const startTs = startOfDay.getTime();
+		
+		const endOfDay = new Date(endDate);
+		endOfDay.setHours(23, 59, 59, 999);
+		const endTs = endOfDay.getTime();
+
+		console.log('Filtering from', startDate, 'to', endDate);
+		console.log('Start timestamp:', startTs, 'End timestamp:', endTs);
 
 		// Find indices of labels that fall within the range
 		const validIndices = [];
 		originalData.labels.forEach((dateStr, index) => {
 			const dateTs = new Date(dateStr).getTime();
+			console.log('Checking date:', dateStr, 'timestamp:', dateTs);
 			if (dateTs >= startTs && dateTs <= endTs) {
 				validIndices.push(index);
 			}
 		});
+
+		console.log('Valid indices:', validIndices);
 
 		// Filter Labels and convert to DD/MM/YYYY format
 		const newLabels = validIndices.map(i => {
@@ -128,10 +161,21 @@
 			};
 		});
 
-		// Update Chart
+		console.log('New labels:', newLabels);
+		console.log('New datasets:', newDatasets);
+
+		// Update Chart with new data
 		chartInstance.data.labels = newLabels;
 		chartInstance.data.datasets = newDatasets;
-		chartInstance.update();
+		
+		// Force recalculation of scales
+		if (chartInstance.options.scales && chartInstance.options.scales.y) {
+			chartInstance.options.scales.y.min = undefined;
+			chartInstance.options.scales.y.max = undefined;
+		}
+		
+		// Update with animation mode 'resize' to recalculate scales
+		chartInstance.update('resize');
 	}
 
 	// 7. Cleanup to prevent memory leaks
@@ -157,11 +201,11 @@
 	<div class="date-controls">
 		<label>
 			<span>From:</span>
-			<input type="date" bind:value={startDate} />
+			<input type="date" bind:value={startDate} on:change={handleDateChange} />
 		</label>
 		<label>
 			<span>To:</span>
-			<input type="date" bind:value={endDate} />
+			<input type="date" bind:value={endDate} on:change={handleDateChange} />
 		</label>
 	</div>
 
