@@ -2,77 +2,139 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { Trash2 } from 'lucide-svelte';
-	import Chart from 'chart.js/auto'; // "auto" registers all chart types automatically
+	import Chart from 'chart.js/auto';
 
 	// 1. Props passed from the parent (+page.svelte)
 	export let title: string;
-	export let type: string; // e.g., 'Bar Chart', 'Line Chart'
+	export let type: string;
 	export let onDelete: () => void;
-    export let data = null; // <--- Add this line to accept the data we processed
+	export let data = null;
     
 	console.log("DashboardCard received data:", data);
+	
 	// 2. Internal State
 	let canvasInfo: HTMLCanvasElement;
 	let chartInstance: any;
+	
+	// Date Range State
+	let startDate = '';
+	let endDate = '';
+	
+	// Store the original full data
+	let originalData = null;
 
 	// 3. Mapping user selection to Chart.js internal types
 	const chartTypes: Record<string, string> = {
 		'Bar Chart': 'bar',
 		'Line Chart': 'line',
 		'Pie Chart': 'pie',
-		'Area Chart': 'line', // Area is a line chart with 'fill: true'
-		'KPI Card': 'bar',     // Fallback
-        'Heatmap': 'bar'       // Fallback
+		'Area Chart': 'line',
+		'KPI Card': 'bar',
+		'Heatmap': 'bar'
 	};
 
 	// 4. Initialize Chart on Mount
 	onMount(() => {
-    if (canvasInfo) {
-        // 1. Map the UI type (e.g., 'Line Chart') to Chart.js type ('line')
-        const configType = chartTypes[type] || 'line';
-        
-        // 2. USE THE ACTUAL DATA
-        // We use the 'data' prop passed from the parent. 
-        // Fallback to empty structure to prevent crashes if data is null.
-        const finalChartData = data || { labels: [], datasets: [] };
+		if (!data) return;
+		
+		// Save reference to the full data
+		originalData = JSON.parse(JSON.stringify(data));
+		
+		if (canvasInfo) {
+			const configType = chartTypes[type] || 'line';
+			const finalChartData = JSON.parse(JSON.stringify(data));
 
-        chartInstance = new Chart(canvasInfo, {
-            type: configType,
-            data: finalChartData, // <--- This injects your processed labels and datasets
-            options: {
-                responsive: true,
-                maintainAspectRatio: false, // Critical for grid resizing
-                interaction: {
-                    mode: 'index', // Shows tooltip for all lines at that specific X-axis point
-                    intersect: false,
-                },
-                plugins: {
-                    legend: { 
-                        display: true, // Show legend so we can see "Fajr", "Maghrib", etc.
-                        position: 'bottom'
-                    },
-                    title: {
-                        display: false // We use the widget header for the title
-                    }
-                },
-                scales: {
-                    y: {
-                        beginAtZero: true, // Starts Y-axis at 0 (good for counting people)
-                        ticks: {
-                            precision: 0 // Forces integers (you can't have 0.5 people)
-                        }
-                    }
-                }
-            }
-        });
-    }
-});
-$: if (chartInstance && data) {
-    chartInstance.data = data;
-    chartInstance.update();
-}
+			chartInstance = new Chart(canvasInfo, {
+				type: configType,
+				data: finalChartData,
+				options: {
+					responsive: true,
+					maintainAspectRatio: false,
+					interaction: {
+						mode: 'index',
+						intersect: false,
+					},
+					plugins: {
+						legend: { 
+							display: false,
+							position: 'bottom'
+						},
+						title: {
+							display: false
+						}
+					},
+					scales: {
+						y: {
+							beginAtZero: true,
+							ticks: {
+								precision: 0
+							}
+						}
+					}
+				}
+			});
+		}
+		
+		// Initialize Date Pickers with Min/Max from data
+		if (originalData.labels && originalData.labels.length > 0) {
+			const dates = originalData.labels.map(l => new Date(l));
+			const minDate = new Date(Math.min(...dates));
+			const maxDate = new Date(Math.max(...dates));
+			
+			startDate = minDate.toISOString().split('T')[0];
+			endDate = maxDate.toISOString().split('T')[0];
+		}
+	});
 
-	// 5. Cleanup to prevent memory leaks
+	// 5. Reactive filtering when dates change
+	$: if (chartInstance && originalData && startDate && endDate) {
+		filterChartData();
+	}
+
+	// 6. Update chart when data prop changes
+	$: if (chartInstance && data && !originalData) {
+		chartInstance.data = data;
+		chartInstance.update();
+	}
+
+	function filterChartData() {
+		// Set to start of day for startDate and end of day for endDate (inclusive)
+		const startTs = new Date(startDate).setHours(0, 0, 0, 0);
+		const endTs = new Date(endDate).setHours(23, 59, 59, 999);
+
+		// Find indices of labels that fall within the range
+		const validIndices = [];
+		originalData.labels.forEach((dateStr, index) => {
+			const dateTs = new Date(dateStr).getTime();
+			if (dateTs >= startTs && dateTs <= endTs) {
+				validIndices.push(index);
+			}
+		});
+
+		// Filter Labels and convert to DD/MM/YYYY format
+		const newLabels = validIndices.map(i => {
+			const date = new Date(originalData.labels[i]);
+			const day = String(date.getDate()).padStart(2, '0');
+			const month = String(date.getMonth() + 1).padStart(2, '0');
+			const year = date.getFullYear();
+			return `${day}/${month}/${year}`;
+		});
+
+		// Filter Data within each Dataset
+		const newDatasets = originalData.datasets.map(dataset => {
+			return {
+				...dataset,
+				data: validIndices.map(i => dataset.data[i])
+			};
+		});
+
+		// Update Chart
+		chartInstance.data.labels = newLabels;
+		chartInstance.data.datasets = newDatasets;
+		chartInstance.update();
+	}
+
+	// 7. Cleanup to prevent memory leaks
 	onDestroy(() => {
 		if (chartInstance) {
 			chartInstance.destroy();
@@ -87,10 +149,20 @@ $: if (chartInstance && data) {
 		
 		<!-- Delete Button -->
 		<button class="delete-btn" on:click={onDelete} title="Remove Widget">
-			<!-- Start dragging logic prevents clicking, so we stopPropagation if needed, 
-                 but usually simple click works fine here -->
 			<Trash2 size={16} />
 		</button>
+	</div>
+
+	<!-- DATE RANGE CONTROLS -->
+	<div class="date-controls">
+		<label>
+			<span>From:</span>
+			<input type="date" bind:value={startDate} />
+		</label>
+		<label>
+			<span>To:</span>
+			<input type="date" bind:value={endDate} />
+		</label>
 	</div>
 
 	<!-- BODY: The Chart Canvas -->
@@ -107,7 +179,6 @@ $: if (chartInstance && data) {
 		display: flex;
 		flex-direction: column;
 		border-radius: 8px;
-		/* Nice soft shadow */
 		box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
 		overflow: hidden; 
 	}
@@ -119,7 +190,7 @@ $: if (chartInstance && data) {
 		padding: 8px 12px;
 		background: #f8f9fa;
 		border-bottom: 1px solid #eee;
-		cursor: move; /* Indicates draggable */
+		cursor: move;
 		user-select: none;
 	}
 
@@ -135,7 +206,7 @@ $: if (chartInstance && data) {
 	.delete-btn {
 		background: transparent;
 		border: none;
-		color: #ef4444; /* Red */
+		color: #ef4444;
 		cursor: pointer;
 		padding: 4px;
 		border-radius: 4px;
@@ -149,10 +220,41 @@ $: if (chartInstance && data) {
 		background: #fee2e2;
 	}
 
+	.date-controls {
+		display: flex;
+		gap: 12px;
+		padding: 8px 12px;
+		background: #f8f9fa;
+		border-bottom: 1px solid #eee;
+		font-size: 0.75rem;
+	}
+
+	.date-controls label {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		color: #444;
+	}
+
+	.date-controls input[type="date"] {
+		border: 1px solid #d1d5db;
+		border-radius: 4px;
+		padding: 4px 6px;
+		font-family: inherit;
+		font-size: 0.75rem;
+		background: white;
+	}
+
+	.date-controls input[type="date"]:focus {
+		outline: none;
+		border-color: #3b82f6;
+		box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+	}
+
 	.card-body {
-		flex: 1; /* Takes up remaining height */
+		flex: 1;
 		position: relative;
 		padding: 10px;
-		min-height: 0; /* Critical flexbox fix for charts */
+		min-height: 0;
 	}
 </style>

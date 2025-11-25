@@ -150,10 +150,8 @@
 			// I changed w/h to 6 because 3 is usually too small for a line chart
 			x: 0, y: 0, w: 4, h: 4, minH: 3, 
 			
-			// !!! THIS IS THE MISSING PIECE !!!
 			data: finalData 
 		};
-		console.log("Adding widget with data:", newWidget);
 
 		// 4. Update State
 		widgets = [...widgets, newWidget];
@@ -274,7 +272,7 @@ function processForLineChart(inputData) {
 
     // 4. EXTRACT DATES (X-AXIS)
     const rawDates = rawData
-        .map(row => row.Column_1 || row.Column_5)
+        .map(row => row.Date || row.Column_5)
         .filter(d => d);
     
     // Sort and Unique
@@ -284,7 +282,7 @@ function processForLineChart(inputData) {
     // 5. GROUP DATA (Y-AXIS LINES)
     const groupedByCategory = {};
     rawData.forEach(row => {
-        const category = row.Column_2 || 'Unknown';
+        const category = row.Namaaz || 'Unknown';
         if (!groupedByCategory[category]) groupedByCategory[category] = [];
         groupedByCategory[category].push(row);
     });
@@ -293,7 +291,7 @@ function processForLineChart(inputData) {
     const datasets = Object.keys(groupedByCategory).map((category, index) => {
         const dataPoints = uniqueLabels.map(targetDate => {
             const record = groupedByCategory[category].find(row => 
-                toDateLabel(row.Column_1 || row.Column_5) === targetDate
+                toDateLabel(row.Date || row.Column_5) === targetDate
             );
 
             if (record) {
