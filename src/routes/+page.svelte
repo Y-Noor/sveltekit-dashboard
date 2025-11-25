@@ -148,7 +148,7 @@
 			title: `${selectedMetric} (${selectedOffice})`,
 			type: selectedViz,
 			// I changed w/h to 6 because 3 is usually too small for a line chart
-			x: 0, y: 0, w: 4, h: 4, minH: 3, 
+			x: 0, y: 0, w: 5, h: 4, minH: 3, 
 			
 			data: finalData 
 		};

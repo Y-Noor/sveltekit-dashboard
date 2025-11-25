@@ -4,14 +4,12 @@
 	import { Trash2 } from 'lucide-svelte';
 	import Chart from 'chart.js/auto';
 
-	// 1. Props passed from the parent (+page.svelte)
+	// 1. Props
 	export let title: string;
 	export let type: string;
 	export let onDelete: () => void;
 	export let data = null;
     
-	console.log("DashboardCard received data:", data);
-	
 	// 2. Internal State
 	let canvasInfo: HTMLCanvasElement;
 	let chartInstance: any;
@@ -23,7 +21,6 @@
 	// Store the original full data
 	let originalData = null;
 
-	// 3. Mapping user selection to Chart.js internal types
 	const chartTypes: Record<string, string> = {
 		'Bar Chart': 'bar',
 		'Line Chart': 'line',
@@ -34,8 +31,6 @@
 		'Attendee Leaderboard': 'bar'
 	};
 
-	const parseDate = (str) => new Date(str).getTime();
-
 	// 4. Initialize Chart on Mount
 	onMount(() => {
 		if (!data) {
@@ -43,29 +38,13 @@
 			return;
 		}
 		
-		console.log('Initializing chart with data:', data);
-		
-		// Save reference to the full data
+		// 1. Save reference to the full data immediately
 		originalData = JSON.parse(JSON.stringify(data));
 
-		if (originalData.labels.length > 0) {
-			// Set default to last 7 days
-			const today = new Date();
-			const sevenDaysAgo = new Date();
-			sevenDaysAgo.setDate(today.getDate() - 7);
-			
-			// Format to YYYY-MM-DD for input fields
-			startDate = sevenDaysAgo.toISOString().split('T')[0];
-			endDate = today.toISOString().split('T')[0];
-			
-			// Apply initial filter
-			filterChartData();
-		}
-
+		// 2. Initialize the Chart Instance FIRST (Empty initially)
 		if (canvasInfo) {
 			const configType = chartTypes[type] || 'line';
 			
-			// Start with empty chart - will be populated by filterChartData
 			chartInstance = new Chart(canvasInfo, {
 				type: configType,
 				data: {
@@ -99,6 +78,20 @@
 				}
 			});
 		}
+
+		// 3. Set Dates and Filter AFTER the chart instance is created
+		if (originalData.labels.length > 0) {
+			const today = new Date();
+			const sevenDaysAgo = new Date();
+			sevenDaysAgo.setDate(today.getDate() - 20);
+			
+			startDate = sevenDaysAgo.toISOString().split('T')[0];
+			endDate = today.toISOString().split('T')[0];
+			
+			// This will now work because chartInstance exists
+			filterChartData();
+			filterChartData();
+		}
 	});
 
 	// 5. Handle date change events
@@ -108,19 +101,23 @@
 		}
 	}
 
-	// 6. Update chart when data prop changes
-	$: if (chartInstance && data && !originalData) {
-		chartInstance.data = data;
-		chartInstance.update();
+	// 6. Update chart when data prop changes (Reactivity fix)
+	$: if (data) {
+		// If new data comes in from parent after mount
+		originalData = JSON.parse(JSON.stringify(data));
+		if (chartInstance && startDate && endDate) {
+			filterChartData();
+		}
 	}
 
 	function filterChartData() {
+		// Safety check
 		if (!chartInstance || !originalData || !originalData.labels || !originalData.datasets) {
-			console.log('Cannot filter - missing data:', { chartInstance, originalData });
+			// This log is now helpful for debugging, but shouldn't trigger on initial load anymore
+			console.warn('Cannot filter - waiting for data or instance'); 
 			return;
 		}
 		
-		// Create new Date objects to avoid mutation issues
 		const startOfDay = new Date(startDate);
 		startOfDay.setHours(0, 0, 0, 0);
 		const startTs = startOfDay.getTime();
@@ -129,22 +126,14 @@
 		endOfDay.setHours(23, 59, 59, 999);
 		const endTs = endOfDay.getTime();
 
-		console.log('Filtering from', startDate, 'to', endDate);
-		console.log('Start timestamp:', startTs, 'End timestamp:', endTs);
-
-		// Find indices of labels that fall within the range
 		const validIndices = [];
 		originalData.labels.forEach((dateStr, index) => {
 			const dateTs = new Date(dateStr).getTime();
-			console.log('Checking date:', dateStr, 'timestamp:', dateTs);
 			if (dateTs >= startTs && dateTs <= endTs) {
 				validIndices.push(index);
 			}
 		});
 
-		console.log('Valid indices:', validIndices);
-
-		// Filter Labels and convert to DD/MM/YYYY format
 		const newLabels = validIndices.map(i => {
 			const date = new Date(originalData.labels[i]);
 			const day = String(date.getDate()).padStart(2, '0');
@@ -153,7 +142,6 @@
 			return `${day}/${month}/${year}`;
 		});
 
-		// Filter Data within each Dataset
 		const newDatasets = originalData.datasets.map(dataset => {
 			return {
 				...dataset,
@@ -161,24 +149,17 @@
 			};
 		});
 
-		console.log('New labels:', newLabels);
-		console.log('New datasets:', newDatasets);
-
-		// Update Chart with new data
 		chartInstance.data.labels = newLabels;
 		chartInstance.data.datasets = newDatasets;
 		
-		// Force recalculation of scales
 		if (chartInstance.options.scales && chartInstance.options.scales.y) {
 			chartInstance.options.scales.y.min = undefined;
 			chartInstance.options.scales.y.max = undefined;
 		}
 		
-		// Update with animation mode 'resize' to recalculate scales
 		chartInstance.update('resize');
 	}
 
-	// 7. Cleanup to prevent memory leaks
 	onDestroy(() => {
 		if (chartInstance) {
 			chartInstance.destroy();
