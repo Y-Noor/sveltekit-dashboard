@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { Trash2, RotateCcw, Layers, Plus } from 'lucide-svelte'; // Added icons
+	import { Trash2, RotateCcw, Layers, Plus } from 'lucide-svelte';
 	
 	// 1. IMPORT STYLES
 	import 'gridstack/dist/gridstack.min.css';
@@ -12,10 +12,13 @@
 	// 3. DATA CONFIGURATION
 	// ------------------------------------------
 	type DashboardConfig = Record<string, Record<string, string[]>>;
+	type ChartData = Record<string, Record<string, any[]>>; 
 
-	type ChartData = Record<string, Record<string, string[]>>; // Define according to your API response structure
-
-	let chartData: ChartData = {}; // State variable to hold fetched chart data
+	let chartData: ChartData = {}; 
+	
+	// State variable to hold the sorted leaderboard
+	// This is now populated correctly in handleFilter
+	let leaderboard_namaaz: any[] = []; 
 
 	const dashboardData: DashboardConfig = {
 		'Tarbiyyat': {
@@ -40,7 +43,6 @@
 	// 3. REACTIVITY & DERIVED STATE
 
 	// Level 2 Options: Get keys of the selected category object
-	// We use "?." (optional chaining) just in case selectedOffice is empty
 	$: availableMetrics = selectedOffice 
 		? Object.keys(dashboardData[selectedOffice] || {}) 
 		: [];
@@ -50,16 +52,19 @@
 		? dashboardData[selectedOffice][selectedMetric] || []
 		: [];
 
-	// 4. RESET LOGIC (The Cascade Effect)
-	
-	// If Category changes -> Reset Metric AND Viz
-	// We iterate on 'selectedOffice' variable change
+    // Reactive Button Text
+    $: buttonText = (() => {
+        if (!selectedOffice) return 'Sync';
+        if (!selectedMetric) return `Sync ${selectedOffice}`;
+        return `Sync ${selectedOffice} - ${selectedMetric}`;
+    })();
+
+	// 4. HANDLERS
 	function handleCategoryChange() {
 		selectedMetric = '';
 		selectedViz = '';
 	}
 
-	// If Metric changes -> Reset Viz only
 	function handleMetricChange() {
 		selectedViz = '';
 	}
@@ -70,33 +75,32 @@
 			return;
 		}
 
-		// 2. Fetch data ONLY for the specified (selected) one
-		const apiData = await fetchChartData(selectedOffice, selectedMetric);
-		console.log(selectedOffice, selectedMetric, apiData);
+		// 1. Fetch data (Logic updated to unwrap the response)
+		const apiResponse = await fetchChartData(selectedOffice, selectedMetric);
+		
+		console.group("--- Processing Leaderboard ---");
+        // 2. Populate Leaderboard
+        // We access .stats directly because fetchChartData now unwraps it
+		if (apiResponse && apiResponse.stats) {
+			leaderboard_namaaz = Object.entries(apiResponse.stats)
+				.map(([name, details]: [string, any]) => ({ name, ...details })) 
+				.sort((a, b) => (b.total || 0) - (a.total || 0)); // Sort by Total Descending
+			
+            console.log("🏆 Leaderboard updated:", leaderboard_namaaz);
+		} else {
+            console.warn("⚠️ Stats missing in response. Leaderboard cleared.");
+			leaderboard_namaaz = [];
+		}
+        console.groupEnd();
 	}
 
-    // REACTIVE BUTTON TEXT
-    // This logic runs automatically whenever selectedOffice or selectedMetric changes.
-    $: buttonText = (() => {
-        // Case 1: Nothing selected yet
-        if (!selectedOffice) return 'Sync';
-        
-        // Case 2: Only Category selected (e.g. "Sync Sales")
-        if (!selectedMetric) return `Sync ${selectedOffice}`;
-        
-        // Case 3: Both selected (e.g. "Sync Sales - Revenue")
-        // This covers the "Category and the next dropdown" requirement
-        return `Sync ${selectedOffice} - ${selectedMetric}`;
-    })();
-    
 	// ------------------------------------------
-	// 4. GRIDSTACK LOGIC
+	// 5. GRIDSTACK LOGIC
 	// ------------------------------------------
 	let grid: any; 
 	let widgets: any[] = []; 
 
 	onMount(async () => {
-		// Dynamic Import to fix "window is not defined" error
 		const module = await import('gridstack');
 		const GridStack = module.GridStack;
 
@@ -114,93 +118,92 @@
 	async function addWidget() {
 		if (!selectedViz) return;
 
-		// --- STEP 1: GET DATA ---
-		// Try to get data from the global cache first
+		// Try to get data from cache
 		let rawData = chartData[selectedOffice]?.[selectedMetric];
 
 		// If cache is empty, fetch it now
 		if (!rawData) {
 			console.log("Cache miss, fetching...");
-			
-			// Save to cache so we don't fetch again
-			if (rawData) {
-				if (!chartData[selectedOffice]) chartData[selectedOffice] = {};
-				chartData[selectedOffice][selectedMetric] = rawData;
-			}
+			const response = await fetchChartData(selectedOffice, selectedMetric);
+            // We only need the array part for the chart
+			rawData = response && response.data ? response.data : [];
 		}
 
-		// --- STEP 2: PROCESS DATA ---
-		// Convert raw API data into Chart.js format
+		// --- PROCESS DATA ---
 		let finalData = null;
-		console.log("Processing data for:", rawData);
-		if (selectedViz === 'Line Chart') {
+		
+        if (selectedViz === 'Line Chart') {
 			finalData = processForLineChart(rawData);
+		} 
+		else if (selectedViz === 'Bar Chart') {
+			finalData = processForBarChart(rawData);
 		} else {
-			// Fallback for other future charts
 			finalData = rawData; 
 		}
 
-		console.log("Final processed data:", finalData);
-
-		// --- STEP 3: CREATE WIDGET ---
 		const newWidget = {
 			id: `widget-${Date.now()}-${Math.random()}`,
 			title: `${selectedMetric} (${selectedOffice})`,
 			type: selectedViz,
-			// I changed w/h to 6 because 3 is usually too small for a line chart
 			x: 0, y: 0, w: 5, h: 4, minH: 3, 
-			
 			data: finalData 
 		};
 
-		// 4. Update State
 		widgets = [...widgets, newWidget];
 		
-		// 5. Wait for DOM
 		await tick();
 		
-		// 6. Register with GridStack
 		const el = document.getElementById(newWidget.id);
 		if (el) grid.makeWidget(el);
 	}
 
-	// --- ACTION: SYNC ALL (Generates a Dashboard) ---
+	// --- ACTION: SYNC ALL ---
 	async function syncAll() {
-        // 1. Prepare list of requests
-        // We loop through categories and pick the FIRST metric for each
         const tasks = Object.keys(dashboardData).map(async (office) => {
-            
-            const metric = Object.keys(dashboardData[office])[0]; // Get 1st metric
-            const viz = dashboardData[office][metric][0];         // Get 1st chart type
+            const metric = Object.keys(dashboardData[office])[0];
+            const viz = dashboardData[office][metric][0];
 
-            // Fetch data for this specific combination
-            const apiData = await fetchChartData(office, metric);
-			console.log(office, metric, apiData);
+            const response = await fetchChartData(office, metric);
+            const rawData = response && response.data ? response.data : [];
+            
+            // Process data based on viz type
+            const finalData = (viz === 'Bar Chart') ? processForBarChart(rawData) : processForLineChart(rawData);
+
             return {
                 id: `widget-${Date.now()}-${Math.random()}`,
                 title: `${metric} (${office})`,
                 type: viz,
                 x: 0, y: 0, w: 6, h: 6, minH: 3,
-                chartData: apiData
+                data: finalData
             };
         });
 
+        const newWidgets = await Promise.all(tasks);
+        
+        widgets = [...widgets, ...newWidgets];
+
+        await tick();
+        newWidgets.forEach(w => {
+            const el = document.getElementById(w.id);
+            if(el) grid.makeWidget(el);
+        });
 	}
 
-	// --- ACTION: CLEAR GRID ---
 	function clearGrid() {
-		grid.removeAll(); // Clears GridStack
-		widgets = [];     // Clears Svelte State
+		grid.removeAll();
+		widgets = [];
 	}
 
-	// --- ACTION: REMOVE SINGLE ---
 	function removeWidget(id: string) {
 		const el = document.getElementById(id);
 		if (el) grid.removeWidget(el, false);
 		widgets = widgets.filter(w => w.id !== id);
 	}
 
- async function fetchChartData(office: string, metric: string) {
+    // ------------------------------------------
+    // 6. DATA FETCHING (FIXED)
+    // ------------------------------------------
+    async function fetchChartData(office: string, metric: string) {
         try {
             const response = await fetch('/api/syncData', {
                 method: 'POST',
@@ -208,119 +211,125 @@
                 body: JSON.stringify({ office, metric })
             });
             
-            const result = await response.json();
+            const rawResult = await response.json();
+            
+            // --- FIX: UNWRAP LOGIC ---
+            // If the structure is { data: { stats: ..., data: ... } }, we unwrap it.
+            const payload = (rawResult.data && rawResult.data.stats) ? rawResult.data : rawResult;
 
-			console.log('Fetched data:', result.data);
-
+            // Update Cache (Store only the Array part for charts to use)
 			if (!chartData[office]) {
 				chartData[office] = {};
 			}
-
-			chartData[office][metric] = result.data; // Store fetched data in state variable
-			console.log('Updated chartData:', chartData);
+			chartData[office][metric] = Array.isArray(payload.data) ? payload.data : [];
             
-            if (result.success) {
-                return result.data;
-            } else {
-                console.warn(`Failed to fetch for ${office}/${metric}`);
-                return null; // Handle empty data gracefully
-            }
+            // Return the full payload so handleFilter can access .stats
+            return payload; 
+
         } catch (e) {
-            console.error(e);
+            console.error("Fetch error:", e);
             return null;
         }
     }
 
-	// Helper to generate distinct colors for the lines
-const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+    // ------------------------------------------
+    // 7. CHART PROCESSORS
+    // ------------------------------------------
 
-function processForLineChart(inputData) {
-    console.group("--- Processing Line Chart Data ---");
+    const getColors = () => ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
     
-    // 1. SAFEGUARD: Handle "undefined" or "null" inputs
-    if (!inputData) {
-        console.error("❌ Input data is undefined or null");
-        console.groupEnd();
-        return null;
-    }
-
-    // 2. UNWRAP: If data is inside an object like { data: [...] }, extract it
-    let rawData = inputData;
-    if (!Array.isArray(inputData) && Array.isArray(inputData.data)) {
-        console.log("⚠️ Data was wrapped in an object. Unwrapping now...");
-        rawData = inputData.data;
-    }
-
-    // 3. VALIDATE: Final check if it is an array
-    if (!Array.isArray(rawData)) {
-        console.error("❌ CRITICAL: Data is not an array even after unwrapping.", rawData);
-        console.groupEnd();
-        return null; // <--- THIS IS WHY YOUR DATA WAS NULL
-    }
-
-    console.log(`✅ Valid Array Found. Length: ${rawData.length}`);
-
-    // Define Colors
-    const colors = ['#36A2EB', '#FF6384', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'];
-
-    // Helper to format date strings
     const toDateLabel = (dateVal) => {
         if (!dateVal) return null;
         try { return new Date(dateVal).toLocaleDateString(); } 
         catch (e) { return null; }
     };
 
-    // 4. EXTRACT DATES (X-AXIS)
-    const rawDates = rawData
-        .map(row => row.Date || row.Column_5)
-        .filter(d => d);
-    
-    // Sort and Unique
-    const uniqueLabels = [...new Set(rawDates.map(d => toDateLabel(d)))];
-    uniqueLabels.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    function processForBarChart(inputData) {
+        // Validation
+        if (!inputData) return null;
+        let rawData = inputData;
+        if (!Array.isArray(inputData) && inputData.data && Array.isArray(inputData.data)) {
+            rawData = inputData.data;
+        }
+        if (!Array.isArray(rawData)) return null;
 
-    // 5. GROUP DATA (Y-AXIS LINES)
-    const groupedByCategory = {};
-    rawData.forEach(row => {
-        const category = row.Namaaz || 'Unknown';
-        if (!groupedByCategory[category]) groupedByCategory[category] = [];
-        groupedByCategory[category].push(row);
-    });
-
-    // 6. BUILD DATASETS
-    const datasets = Object.keys(groupedByCategory).map((category, index) => {
-        const dataPoints = uniqueLabels.map(targetDate => {
-            const record = groupedByCategory[category].find(row => 
-                toDateLabel(row.Date || row.Column_5) === targetDate
-            );
-
-            if (record) {
-                // If 'Presence' is an array, count the people. Else use the number.
-                if (Array.isArray(record.Presence)) return record.Presence.length;
-                return Number(record.Number_of_Present) || 0;
-            }
-            return 0;
+        // Logic: Count occurrences per date
+        const labels = [...new Set(rawData.map(row => toDateLabel(row.Date || row.Column_5)))].sort();
+        
+        const dataPoints = labels.map(date => {
+            const matchingRows = rawData.filter(row => toDateLabel(row.Date || row.Column_5) === date);
+            return matchingRows.reduce((sum, row) => {
+                if (Array.isArray(row.Presence)) return sum + row.Presence.length;
+                return sum + (Number(row.Number_of_Present) || 0);
+            }, 0);
         });
 
         return {
-            label: category,
-            data: dataPoints,
-            borderColor: colors[index % colors.length],
-            backgroundColor: colors[index % colors.length],
-            tension: 0.3,
-            fill: false
+            labels,
+            datasets: [{
+                label: 'Total Attendance',
+                data: dataPoints,
+                backgroundColor: getColors(),
+                borderWidth: 1
+            }]
         };
-    });
+    }
 
-    const result = { labels: uniqueLabels, datasets };
-    console.log("✅ Final Processed Data:", result);
-    console.groupEnd();
-    
-    return result;
-}
+    function processForLineChart(inputData) {
+        // Validation
+        if (!inputData) return null;
+        let rawData = inputData;
+        if (!Array.isArray(inputData) && inputData.data && Array.isArray(inputData.data)) {
+            rawData = inputData.data;
+        }
+        if (!Array.isArray(rawData)) return null;
+
+        const colors = getColors();
+
+        // 1. Extract Dates
+        const rawDates = rawData
+            .map(row => row.Date || row.Column_5)
+            .filter(d => d);
+        
+        const uniqueLabels = [...new Set(rawDates.map(d => toDateLabel(d)))];
+        uniqueLabels.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+
+        // 2. Group by Category
+        const groupedByCategory = {};
+        rawData.forEach(row => {
+            const category = row.Namaaz || 'Unknown';
+            if (!groupedByCategory[category]) groupedByCategory[category] = [];
+            groupedByCategory[category].push(row);
+        });
+
+        // 3. Build Datasets
+        const datasets = Object.keys(groupedByCategory).map((category, index) => {
+            const dataPoints = uniqueLabels.map(targetDate => {
+                const record = groupedByCategory[category].find(row => 
+                    toDateLabel(row.Date || row.Column_5) === targetDate
+                );
+
+                if (record) {
+                    if (Array.isArray(record.Presence)) return record.Presence.length;
+                    return Number(record.Number_of_Present) || 0;
+                }
+                return 0;
+            });
+
+            return {
+                label: category,
+                data: dataPoints,
+                borderColor: colors[index % colors.length],
+                backgroundColor: colors[index % colors.length],
+                tension: 0.3,
+                fill: false
+            };
+        });
+
+        return { labels: uniqueLabels, datasets };
+    }
 
 </script>
-
 
 <main>
 	<div class="dashboard-controls">
